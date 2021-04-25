@@ -887,6 +887,7 @@ public class BrokerController {
             this.registerBrokerAll(true, false, true);
         }
 
+        //每隔60秒发送一次心跳，NameServer收到心跳会更新brokerLiveTable
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override

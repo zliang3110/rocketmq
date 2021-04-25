@@ -47,12 +47,19 @@ import org.apache.rocketmq.remoting.common.RemotingUtil;
 
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
+    // broker过期时间，
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
+    // 读写锁
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    //topic路由信息，根据路由信息进行负载均衡
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    //broker基本信息，broker名称,集群名称，主备broker地址
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    //集群信息，存储集群中所有Broker信息
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    //broker状态信息，每次收到心跳包会更新此信息
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+    //broker FilterServer列表
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
     public RouteInfoManager() {
@@ -99,6 +106,18 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     * 更新nameServer路由信息
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param channel
+     * @return
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -426,6 +445,9 @@ public class RouteInfoManager {
         return null;
     }
 
+    /**
+     * 扫描超过120秒未收到心跳包的broker并关闭连接
+     */
     public void scanNotActiveBroker() {
         Iterator<Entry<String, BrokerLiveInfo>> it = this.brokerLiveTable.entrySet().iterator();
         while (it.hasNext()) {
@@ -435,6 +457,7 @@ public class RouteInfoManager {
                 RemotingUtil.closeChannel(next.getValue().getChannel());
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
+                //移除boker相关信息
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
             }
         }

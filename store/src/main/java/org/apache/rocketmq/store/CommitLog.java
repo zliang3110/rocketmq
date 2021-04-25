@@ -802,6 +802,7 @@ public class CommitLog {
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            // 消息延迟级别 > 0,将原主题名称与原消息队列ID存入消息属性中，用延迟消息主题、消息队列更新原先消息的主题和队列
             if (msg.getDelayTimeLevel() > 0) {
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
@@ -833,8 +834,10 @@ public class CommitLog {
         long elapsedTimeInLock = 0;
 
         MappedFile unlockMappedFile = null;
+        //获取当前可以写入的CommitLog
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();
 
+        //申请锁，串行写入
         putMessageLock.lock(); //spin or ReentrantLock ,depending on store config
         try {
             long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();
@@ -844,15 +847,18 @@ public class CommitLog {
             // global
             msg.setStoreTimestamp(beginLockTimestamp);
 
+            //消息为空或消息写满了，用偏移量0创建第一个CommitLog文件
             if (null == mappedFile || mappedFile.isFull()) {
                 mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
             }
+            //这里还未空有可能是空间不足或者权限不够
             if (null == mappedFile) {
                 log.error("create mapped file1 error, topic: " + msg.getTopic() + " clientAddr: " + msg.getBornHostString());
                 beginTimeInLock = 0;
                 return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);
             }
 
+            //追加文件
             result = mappedFile.appendMessage(msg, this.appendMessageCallback);
             switch (result.getStatus()) {
                 case PUT_OK:
@@ -884,6 +890,7 @@ public class CommitLog {
             elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;
             beginTimeInLock = 0;
         } finally {
+            // 释放锁
             putMessageLock.unlock();
         }
 
@@ -1541,6 +1548,7 @@ public class CommitLog {
             }
 
             // Record ConsumeQueue information
+            // 获取消息在消息队列中的偏移量。CommitLog中保存所有消息队列当前待写入偏移量
             keyBuilder.setLength(0);
             keyBuilder.append(msgInner.getTopic());
             keyBuilder.append('-');
@@ -1585,8 +1593,10 @@ public class CommitLog {
 
             final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;
 
+            //计算消息长度
             final int msgLen = calMsgLength(msgInner.getSysFlag(), bodyLength, topicLength, propertiesLength);
 
+            // 消息长度4个字节，最大长度2^31 - 1
             // Exceeds the maximum message
             if (msgLen > this.maxMessageSize) {
                 CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLength
@@ -1595,6 +1605,8 @@ public class CommitLog {
             }
 
             // Determines whether there is sufficient free space
+            // END_FILE_MIN_BLANK_LENGTH 8个字节
+            // 如果 msgLen + END_FILE_MIN_BLANK_LENGTH > CommitLog空闲空间，Broker会重新创建一个新的CommitLog
             if ((msgLen + END_FILE_MIN_BLANK_LENGTH) > maxBlank) {
                 this.resetByteBuffer(this.msgStoreItemMemory, maxBlank);
                 // 1 TOTALSIZE
@@ -1667,6 +1679,7 @@ public class CommitLog {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
                     // The next update ConsumeQueue information
+                    // 更新消息队列逻辑便宜亮
                     CommitLog.this.topicQueueTable.put(key, ++queueOffset);
                     break;
                 default:
